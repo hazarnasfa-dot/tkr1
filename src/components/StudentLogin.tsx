@@ -92,13 +92,14 @@ export const StudentLogin: React.FC<StudentLoginProps> = ({
   };
 
   const handleTokenChange = (val: string) => {
-    setTokenInput(val);
+    const sanitizedVal = val.replace(/\s+/g, ' ');
+    setTokenInput(sanitizedVal);
     setErrorMessage('');
     if (tokenTouched) {
-      if (!val.trim()) {
+      if (!sanitizedVal.trim()) {
         setTokenError('Pastikan Token Anda Sudah Benar');
       } else {
-        const result = storageService.validateToken(val, classGroup);
+        const result = storageService.validateToken(sanitizedVal, classGroup, name);
         setTokenError(result.valid ? '' : result.message || 'Pastikan Token Anda Sudah Benar');
       }
     }
@@ -109,7 +110,7 @@ export const StudentLogin: React.FC<StudentLoginProps> = ({
     if (!tokenInput.trim()) {
       setTokenError('Pastikan Token Anda Sudah Benar');
     } else {
-      const result = storageService.validateToken(tokenInput, classGroup);
+      const result = storageService.validateToken(tokenInput, classGroup, name);
       setTokenError(result.valid ? '' : result.message || 'Pastikan Token Anda Sudah Benar');
     }
   };
@@ -136,8 +137,8 @@ export const StudentLogin: React.FC<StudentLoginProps> = ({
     setIsLoading(true);
 
     try {
-      // Validate token with Google Forms style Regular Expression Matching
-      const result = storageService.validateToken(tokenInput, classGroup);
+      // Validate token with Google Forms style Regular Expression Matching & Name-based token support
+      const result = storageService.validateToken(tokenInput, classGroup, name);
 
       if (!result.valid || !result.token) {
         const errorText = result.message || 'Pastikan Token Anda Sudah Benar';
@@ -435,7 +436,7 @@ export const StudentLogin: React.FC<StudentLoginProps> = ({
                     type="text"
                     required
                     value={tokenInput}
-                    onChange={(e) => handleTokenChange(e.target.value.toUpperCase())}
+                    onChange={(e) => handleTokenChange(e.target.value.replace(/\s+/g, ' ').toUpperCase())}
                     onBlur={handleTokenBlur}
                     placeholder="Masukkan Token Ujian"
                     className={`w-full bg-slate-950 border rounded-xl pl-10 pr-4 py-2.5 text-sm font-mono tracking-wider font-bold placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-600 focus:outline-none uppercase transition-all ${

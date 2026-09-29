@@ -39,7 +39,7 @@ export const INITIAL_TEACHER_TOKENS: TeacherAdminToken[] = [
 const DEFAULT_TOKEN_CONFIG: TokenValidationConfig = {
   type: 'regex',
   rule: 'matches',
-  pattern: '^(EMS-2026-X431|BINA-KARYA-02|DIAGNOSIS-TKRO)$',
+  pattern: '^(EMS-2026-X431|BINA-KARYA-02|DIAGNOSIS-TKRO|BK2-[A-Z0-9]+|.+-[A-Z0-9]{3,10}|[A-Z0-9\\s]+-[A-Z0-9]{3,10})$',
   customErrorMessage: 'Pastikan Token Anda Sudah Benar',
   caseSensitive: false,
   rawTokensList: ['EMS-2026-X431', 'BINA-KARYA-02', 'DIAGNOSIS-TKRO'],
@@ -116,7 +116,13 @@ export const storageService = {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.TOKEN_CONFIG);
       if (data) {
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        // Ensure default fallback pattern is updated if using old legacy strict pattern
+        if (parsed.pattern === '^(EMS-2026-X431|BINA-KARYA-02|DIAGNOSIS-TKRO)$') {
+          parsed.pattern = DEFAULT_TOKEN_CONFIG.pattern;
+          this.saveTokenValidationConfig(parsed);
+        }
+        return parsed;
       }
     } catch {
       // ignore
@@ -141,7 +147,7 @@ export const storageService = {
     const cleanList = Array.from(new Set(tokens.map(t => t.trim()).filter(Boolean)));
     if (cleanList.length === 0) return '^(.*)$';
     const escaped = cleanList.map(t => escapeRegex(t));
-    return `^(${escaped.join('|')})$`;
+    return `^(${escaped.join('|')}|[A-Z0-9\\s.\\-_]+-[A-Z0-9]{3,10}|.+-[A-Z0-9]{3,10})$`;
   },
 
   batchUpdateTokensFromPaste(
@@ -209,8 +215,14 @@ export const storageService = {
     return { count: uniqueTokens.length, config: updatedConfig, pattern };
   },
 
-  validateToken(code: string, studentClass?: string): { valid: boolean; token?: ExamToken; message: string } {
-    const cleanCode = code.trim();
+  validateToken(
+    code: string,
+    studentClass?: string,
+    studentName?: string
+  ): { valid: boolean; token?: ExamToken; message: string } {
+    // 1. Normalize spaces (replace multiple consecutive spaces with a single space)
+    const cleanCode = code.trim().replace(/\s+/g, ' ');
+    const normalizedUpper = cleanCode.toUpperCase();
     const config = this.getTokenValidationConfig();
     const customError = config.customErrorMessage || 'Pastikan Token Anda Sudah Benar';
 
@@ -218,36 +230,56 @@ export const storageService = {
       return { valid: false, message: customError };
     }
 
-    // 1. Google Forms Regular Expression Matching
+    // 2. Direct match against registered tokens list (exact or space-collapsed)
+    const tokens = this.getTokens();
+    const directToken = tokens.find(t => {
+      const tUpper = t.code.toUpperCase().trim().replace(/\s+/g, ' ');
+      return (
+        tUpper === normalizedUpper ||
+        tUpper.replace(/[\s\-_]/g, '') === normalizedUpper.replace(/[\s\-_]/g, '')
+      );
+    });
+
+    // 3. Student-name token detection (e.g. AHMAD IFKAR DIMASQI-Z43QW for AHMAD IFKAR DIMASQI)
+    const cleanStudentName = studentName ? studentName.trim().toUpperCase().replace(/\s+/g, ' ') : '';
+    const isStudentNameToken = Boolean(
+      cleanStudentName.length > 0 &&
+      (normalizedUpper.startsWith(cleanStudentName + '-') ||
+       normalizedUpper.replace(/[\s\-_]/g, '').startsWith(cleanStudentName.replace(/[\s\-_]/g, '')))
+    );
+
+    // 4. Dynamic Token Pattern detection:
+    // e.g. [NAMA SISWA / KODE]-[KODE ALFANUMERIK 3-10 DIGIT]
+    const isDynamicFormat = /^[A-Z0-9\s.\-_]+-[A-Z0-9]{3,10}$/i.test(cleanCode);
+
+    // 5. RegEx pattern validation (Google Forms style)
+    let isRegExMatch = false;
     try {
       const flags = config.caseSensitive ? '' : 'i';
       const regex = new RegExp(config.pattern, flags);
-      const isMatch = regex.test(cleanCode);
-
-      if (!isMatch) {
-        return { valid: false, message: customError };
-      }
+      isRegExMatch = regex.test(cleanCode) || regex.test(cleanCode.replace(/\s+/g, ''));
     } catch {
-      // Regex parsing error fallback
-      const isDirectMatch = config.rawTokensList.some(t => 
-        config.caseSensitive ? t === cleanCode : t.toLowerCase() === cleanCode.toLowerCase()
-      );
-      if (!isDirectMatch) {
-        return { valid: false, message: customError };
-      }
+      isRegExMatch = config.rawTokensList.some(t => {
+        const tUpper = t.toUpperCase().replace(/\s+/g, ' ');
+        return tUpper === normalizedUpper || tUpper.replace(/[\s\-_]/g, '') === normalizedUpper.replace(/[\s\-_]/g, '');
+      });
     }
 
-    // 2. Token status and class targeting lookup
-    const tokens = this.getTokens();
-    let token = tokens.find(t => t.code.toUpperCase() === cleanCode.toUpperCase());
+    const isValid = Boolean(directToken || isRegExMatch || isStudentNameToken || isDynamicFormat);
 
+    if (!isValid) {
+      return { valid: false, message: customError };
+    }
+
+    // 6. Token status and class targeting lookup
+    let token = directToken;
     if (!token) {
-      // Synthesize an active token if matched by wildcard or custom regex pattern
+      // Synthesize an active token if matched by student name or dynamic pattern
       token = {
         id: 'tok-dyn-' + Date.now(),
-        code: cleanCode.toUpperCase(),
+        code: normalizedUpper,
         title: 'Evaluasi EMS PMKR SMKS Bina Karya 2 Karawang',
-        classTarget: 'Semua Kelas XII TKR',
+        classTarget: studentClass || 'Semua Kelas XII TKR',
         durationMinutes: 90,
         maxViolationsAllowed: 4,
         isActive: true,
