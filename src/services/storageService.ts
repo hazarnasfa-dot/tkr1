@@ -91,14 +91,30 @@ export const storageService = {
   },
 
   addOrUpdateToken(token: ExamToken) {
+    const cleanCode = token.code.trim().replace(/\s+/g, ' ').toUpperCase();
+    token.code = cleanCode;
     const tokens = this.getTokens();
-    const idx = tokens.findIndex(t => t.code.toUpperCase() === token.code.toUpperCase());
+    const idx = tokens.findIndex(t => 
+      t.code.toUpperCase().replace(/\s+/g, ' ') === cleanCode ||
+      t.code.toUpperCase().replace(/[\s\-_]/g, '') === cleanCode.replace(/[\s\-_]/g, '')
+    );
     if (idx >= 0) {
-      tokens[idx] = token;
+      tokens[idx] = { ...tokens[idx], ...token, code: cleanCode };
     } else {
       tokens.unshift(token);
     }
     this.saveTokens(tokens);
+
+    // Synchronize into TokenValidationConfig immediately
+    try {
+      const config = this.getTokenValidationConfig();
+      const allCodes = Array.from(new Set([...tokens.map(t => t.code.trim().replace(/\s+/g, ' ')), cleanCode]));
+      config.rawTokensList = allCodes;
+      config.pattern = this.buildRegexFromRawTokens(allCodes);
+      this.saveTokenValidationConfig(config);
+    } catch {
+      // ignore
+    }
   },
 
   toggleTokenStatus(code: string): boolean {
@@ -240,6 +256,16 @@ export const storageService = {
       );
     });
 
+    if (directToken) {
+      if (!directToken.isActive) {
+        return { valid: false, message: 'Token ini sedang DINONAKTIFKAN oleh Instruktur (Tarim, ST., MT.)!' };
+      }
+      if (directToken.classTarget !== 'Semua Kelas XII TKR' && studentClass && directToken.classTarget !== studentClass) {
+        return { valid: false, message: `Token ini hanya berlaku untuk siswa kelas ${directToken.classTarget}!` };
+      }
+      return { valid: true, token: directToken, message: 'Token valid. Akses diizinkan!' };
+    }
+
     // 3. Student-name token detection (e.g. AHMAD IFKAR DIMASQI-Z43QW for AHMAD IFKAR DIMASQI)
     const cleanStudentName = studentName ? studentName.trim().toUpperCase().replace(/\s+/g, ' ') : '';
     const isStudentNameToken = Boolean(
@@ -265,34 +291,26 @@ export const storageService = {
       });
     }
 
-    const isValid = Boolean(directToken || isRegExMatch || isStudentNameToken || isDynamicFormat);
+    const isValid = Boolean(isRegExMatch || isStudentNameToken || isDynamicFormat);
 
     if (!isValid) {
       return { valid: false, message: customError };
     }
 
-    // 6. Token status and class targeting lookup
-    let token = directToken;
-    if (!token) {
-      // Synthesize an active token if matched by student name or dynamic pattern
-      token = {
-        id: 'tok-dyn-' + Date.now(),
-        code: normalizedUpper,
-        title: 'Evaluasi EMS PMKR SMKS Bina Karya 2 Karawang',
-        classTarget: studentClass || 'Semua Kelas XII TKR',
-        durationMinutes: 90,
-        maxViolationsAllowed: 4,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 86400000).toISOString(),
-        createdBy: 'Tarim, ST., MT.'
-      };
-      this.addOrUpdateToken(token);
-    }
-
-    if (!token.isActive) {
-      return { valid: false, message: 'Token ini sedang DINONAKTIFKAN oleh Instruktur (Tarim, ST., MT.)!' };
-    }
+    // 6. Token status and class targeting lookup for dynamic tokens
+    let token: ExamToken = {
+      id: 'tok-dyn-' + Date.now(),
+      code: normalizedUpper,
+      title: 'Evaluasi EMS PMKR SMKS Bina Karya 2 Karawang',
+      classTarget: studentClass || 'Semua Kelas XII TKR',
+      durationMinutes: 90,
+      maxViolationsAllowed: 4,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86400000).toISOString(),
+      createdBy: 'Tarim, ST., MT.'
+    };
+    this.addOrUpdateToken(token);
 
     if (token.classTarget !== 'Semua Kelas XII TKR' && studentClass && token.classTarget !== studentClass) {
       return { valid: false, message: `Token ini hanya berlaku untuk siswa kelas ${token.classTarget}!` };
