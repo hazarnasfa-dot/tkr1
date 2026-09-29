@@ -1,0 +1,6 @@
+{
+  "name": "CBT SMKS Bina Karya 2 Karawang - Engine Management System",
+  "description": "Sistem Computer Based Test (CBT) Terintegrasi Anti-Cheat dan Bank Soal Engine Management System (EMS) Kendaraan Ringan oleh Tarim, ST., MT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
